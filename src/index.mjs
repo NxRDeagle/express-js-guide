@@ -1,116 +1,77 @@
-import express from "express";
-import {
-  query,
-  validationResult,
-  matchedData,
-  checkSchema,
-} from "express-validator";
-import { createUserValidationSchema } from "./utils/validationSchemas.mjs";
+import express, { response } from "express";
+import cookieParser from "cookie-parser";
+import session from "express-session";
+import routes from "./routes/index.mjs";
+import { logggingMiddleware } from "./utils/middlewares.mjs";
+import { mockUsers } from "./utils/constants.mjs";
 
 const app = express();
 
 app.use(express.json());
-
-const logggingMiddleware = (request, response, next) => {
-  console.log(`${request.method} - ${request.url}`);
-  next();
-};
-
+app.use(cookieParser("COOKIE_SECRET"));
+app.use(
+  session({
+    secret: "SESSION_SECRET",
+    saveUninitialized: false,
+    resave: false,
+    cookie: {
+      maxAge: 1000 * 60 * 60, // 1 hour
+    },
+  })
+);
 app.use(logggingMiddleware);
-
-const resolveIndexByUserId = (request, response, next) => {
-  const {
-    params: { id },
-  } = request;
-  const parsedId = parseInt(id);
-  if (isNaN(parsedId)) return response.sendStatus(404);
-  const findUserIndex = mockUsers.findIndex((user) => user.id === parsedId);
-  if (findUserIndex === -1) return response.sendStatus(404);
-  request.findUserIndex = findUserIndex;
-  next();
-};
+app.use(routes);
 
 const PORT = process.env.PORT || 3000;
-
-const mockUsers = [
-  { id: 1, username: "vasya", displayName: "Vasya" },
-  { id: 2, username: "jack", displayName: "Jack" },
-  { id: 3, username: "john", displayName: "John" },
-  { id: 4, username: "alex", displayName: "Alex" },
-  { id: 5, username: "ann", displayName: "Ann" },
-];
 
 app.listen(PORT, () => {
   console.log(`Running on ${PORT}`);
 });
 
 app.get("/", (request, response) => {
+  console.log(request.session);
+  console.log(request.session.id);
+  request.session.visited = true;
+  response.cookie("hello", "world", { maxAge: 30000, signed: true });
   response.status(201).send("hello");
 });
 
-app.get(
-  "/api/users",
-  query("filter")
-    .isString()
-    .notEmpty()
-    .withMessage("Must not be empty.")
-    .isLength({ min: 3, max: 10 })
-    .withMessage("Must be at least 3-10 characters."),
-  (request, response) => {
-    const result = validationResult(request);
-    console.log(result);
-    const {
-      query: { filter, value },
-    } = request;
-    if (filter && value) {
-      const filterUsers = mockUsers.filter((user) =>
-        user[filter].includes(value)
-      );
-      return response.send(filterUsers);
-    }
-    return response.send(mockUsers);
+app.post("/api/auth", (request, response) => {
+  const {
+    body: { username, password },
+  } = request;
+  const findUser = mockUsers.find((user) => user.username === username);
+  if (!findUser || findUser.password !== password)
+    return response.status(401).send({ msg: "Bad Credentials" });
+
+  request.session.user = findUser;
+  return response.status(200).send(findUser);
+});
+
+app.get("/api/auth/status", (request, response) => {
+  request.sessionStore.get(request.sessionID, (error, session) => {
+    console.log(session);
+  });
+  return request.session.user
+    ? response.status(200).send(request.session.user)
+    : response.status(401).send({ msg: "Not Authorized" });
+});
+
+app.post("/api/cart", (request, response) => {
+  if (!request.session.user) return response.sendStatus(401);
+  const { body: item } = request;
+
+  const { cart } = request.session;
+
+  if (cart) {
+    cart.push(item);
+  } else {
+    request.session.cart = [item];
   }
-);
-
-app.post(
-  "/api/users",
-  checkSchema(createUserValidationSchema),
-  (request, response) => {
-    const result = validationResult(request);
-    if (!result.isEmpty())
-      return response.status(400).send({ errors: result.array() });
-
-    const data = matchedData(request);
-
-    const newId = mockUsers[mockUsers.length - 1].id + 1;
-    const newUser = { id: newId, ...data };
-    mockUsers.push(newUser);
-    return response.status(201).send(newUser);
-  }
-);
-
-app.get("/api/users/:id", resolveIndexByUserId, (request, response) => {
-  const { findUserIndex } = request;
-  const findUser = mockUsers[findUserIndex];
-  if (!findUser) return response.sendStatus(404);
-  return response.send(findUser);
+  return response.status(201).send(item);
 });
 
-app.put("/api/users/:id", resolveIndexByUserId, (request, response) => {
-  const { body, findUserIndex } = request;
-  mockUsers[findUserIndex] = { id: mockUsers[findUserIndex].id, ...body };
-  return response.sendStatus(200);
-});
-
-app.patch("/api/users/:id", resolveIndexByUserId, (request, response) => {
-  const { body, findUserIndex } = request;
-  const findUser = mockUsers[findUserIndex];
-  mockUsers[findUserIndex] = { ...findUser, ...body };
-  return response.sendStatus(200);
-});
-
-app.delete("/api/users/:id", resolveIndexByUserId, (request, response) => {
-  const { findUserIndex } = request;
-  mockUsers.splice(findUserIndex, 1);
-  return response.sendStatus(200);
+app.get("/api/cart", (request, response) => {
+  if (!request.session.user) return response.sendStatus(401);
+  return response.send(request.session.cart ?? []);
 });
