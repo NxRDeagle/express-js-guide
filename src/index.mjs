@@ -3,27 +3,33 @@ import cookieParser from "cookie-parser";
 import session from "express-session";
 import passport from "passport";
 import mongoose from "mongoose";
+import MongoStore from "connect-mongo";
 import routes from "./routes/index.mjs";
 import { logggingMiddleware } from "./utils/middlewares.mjs";
-import "./strategies/local-strategy.mjs";
+import "dotenv/config";
+// import "./strategies/local-strategy.mjs";
+import "./strategies/google-strategy.mjs";
 
 const app = express();
 
 mongoose
-  .connect("mongodb://localhost/express-js-guide")
+  .connect(process.env.DB_URL)
   .then(() => console.log("connected to db"))
   .catch((err) => console.log(`Error: ${err}`));
 
 app.use(express.json());
-app.use(cookieParser("COOKIE_SECRET"));
+app.use(cookieParser(process.env.COOKIE_SECRET));
 app.use(
   session({
-    secret: "SESSION_SECRET",
+    secret: process.env.SESSION_SECRET,
     saveUninitialized: false,
     resave: false,
     cookie: {
       maxAge: 1000 * 60 * 60, // 1 hour
     },
+    store: MongoStore.create({
+      client: mongoose.connection.getClient(),
+    }),
   })
 );
 app.use(logggingMiddleware);
